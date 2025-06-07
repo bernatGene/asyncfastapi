@@ -1,10 +1,11 @@
-from typing import AsyncGenerator, Annotated
+from typing import Generator, Annotated
 import asyncio
 from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select, func
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import Session
 from models import Hero, Heroes
 
 DATABASE_URL_DIALECT = (
@@ -19,31 +20,29 @@ app = FastAPI(
 )
 
 
-engine = create_async_engine(
+engine = create_engine(
     DATABASE_URL_DIALECT,
-    pool_size=50,
-    max_overflow=50,
 )
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async_session = async_sessionmaker(
+def get_session() -> Generator[Session, None, None]:
+    session = sessionmaker(
         bind=engine,
-        class_=AsyncSession,
+        class_=Session,
         expire_on_commit=False,
     )
-    async with async_session() as session:
-        yield session
+    with session() as sess:
+        yield sess
 
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @app.post("/heroes/")
-async def create_hero(hero: Hero, session: SessionDep):
+def create_hero(hero: Hero, session: SessionDep):
     session.add(hero)
     try:
-        await session.commit()
+        session.commit()
         return hero
     except IntegrityError:
         session.rollback()
@@ -51,22 +50,22 @@ async def create_hero(hero: Hero, session: SessionDep):
 
 
 @app.get("/heroes/{hero_id}/")
-async def read_hero(hero_id: int, session: SessionDep):
-    hero = await session.get(Hero, hero_id)
+def read_hero(hero_id: int, session: SessionDep):
+    hero = session.get(Hero, hero_id)
     if not hero:
         raise HTTPException(status_code=404, detail="Hero not found")
     return hero
 
 
 @app.get("/heroes/")
-async def read_heroes(session: SessionDep):
-    count = await session.exec(select(func.count()).select_from(Hero))
-    res = await session.exec(select(Hero))
+def read_heroes(session: SessionDep):
+    count = session.exec(select(func.count()).select_from(Hero))
+    res = session.exec(select(Hero))
     return Heroes(data=res.all(), count=count.one())
 
 
 @app.get("/pool-status/")
-async def pool_status():
+def pool_status():
     pool = engine.pool
     return {
         "size": pool.size(),
@@ -77,12 +76,12 @@ async def pool_status():
 
 
 @app.post("/heroes/minimal/")
-async def create_hero_minimal():
+def create_hero_minimal():
     return {"id": 1, "name": "test", "country": "test"}
 
 
 @app.get("/asyncio-stats/")
-async def asyncio_stats():
+def asyncio_stats():
     loop = asyncio.get_event_loop()
     tasks = asyncio.all_tasks(loop)
 
